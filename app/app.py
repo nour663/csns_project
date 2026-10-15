@@ -1,4 +1,5 @@
-from flask import Flask, request, session, redirect, make_response, render_template_string
+
+from flask import Flask, request, session, redirect, render_template_string, url_for
 import time
 
 app = Flask(__name__)
@@ -18,32 +19,33 @@ USERS = {
 }
 
 LOGIN_TEMPLATE = '''
-<html>
-<head><title>Vulnerable Bank - Login</title></head>
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Vulnerable Bank - Login</title></head>
 <body>
     <h1>Vulnerable Bank Login</h1>
     {% if error %}
         <p style="color:red">{{ error }}</p>
     {% endif %}
-    <form method="POST" action="/login">
-        <label>Username: <input type="text" name="username" /></label><br><br>
-        <label>Password: <input type="password" name="password" /></label><br><br>
+    <form method="POST" action="{{ url_for('login') }}">
+        <label>Username: <input type="text" name="username" required></label><br><br>
+        <label>Password: <input type="password" name="password" required></label><br><br>
         <button type="submit">Login</button>
     </form>
     <br>
-    <p>Test credentials: alice / password123</p>
+    <p>Demo credentials: alice / password123</p>
 </body>
 </html>
 '''
 
 HOME_TEMPLATE = '''
-<html>
-<head><title>Vulnerable Bank</title></head>
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Vulnerable Bank</title></head>
 <body>
     <h1>Welcome to Vulnerable Bank</h1>
-    <!-- VULNERABILITY: X-Forwarded-Host reflected into links -->
-    <a href="http://{{ host }}/login">Login</a> |
-    <a href="http://{{ host }}/account">My Account</a>
+    <a href="{{ demo_base }}/login/">Login</a> |
+    <a href="{{ demo_base }}/account/">My Account</a>
     <br><br>
     <p style="color:red">Debug - Host used: {{ host }}</p>
 </body>
@@ -51,90 +53,91 @@ HOME_TEMPLATE = '''
 '''
 
 ACCOUNT_TEMPLATE = '''
-<html>
-<head><title>Account</title></head>
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Demo Account</title></head>
 <body>
     <h1>Account: {{ user }}</h1>
     <p>Balance: {{ balance }}</p>
     <p>SSN: {{ ssn }}</p>
-    <p>Timestamp: {{ time }}</p>
-    <br>
-    <a href="/logout">Logout</a>
+    <p>Timestamp: {{ timestamp }}</p>
+    <p>This is fictional training data for a local lab.</p>
+    <a href="{{ url_for('logout') }}">Logout</a>
 </body>
 </html>
 '''
 
-# -------------------------------------------------------
-# Home page — vulnerable to X-Forwarded-Host poisoning
-# -------------------------------------------------------
 @app.route('/')
 def home():
-    host = request.headers.get('X-Forwarded-Host', request.host)
-    return render_template_string(HOME_TEMPLATE, host=host)
+    # Intentionally vulnerable for the isolated cache-poisoning lab.
+    host = request.headers.get('X-Forwarded-Host', request.host).strip()
 
-# -------------------------------------------------------
-# Login — GET shows form, POST processes credentials
-# -------------------------------------------------------
-@app.route('/login', methods=['GET', 'POST'])
+    # Use the forwarded host for the lab's links.
+    demo_base = f"http://{host}"
+
+    return render_template_string(
+        HOME_TEMPLATE,
+        host=host,
+        demo_base=demo_base
+    )
+
+@app.route('/login', methods=['GET', 'POST'], strict_slashes=False)
 def login():
     if request.method == 'POST':
         username = request.form.get('username', '')
         password = request.form.get('password', '')
-
         user = USERS.get(username)
+
         if user and user['password'] == password:
             session['user'] = username
-            return redirect('/account')
-        else:
-            return render_template_string(LOGIN_TEMPLATE, error='Invalid credentials')
+            return redirect(url_for('account'))
+
+        return render_template_string(
+            LOGIN_TEMPLATE,
+            error='Invalid credentials'
+        ), 401
 
     return render_template_string(LOGIN_TEMPLATE, error=None)
 
-# -------------------------------------------------------
-# Account — protected page
-# -------------------------------------------------------
-@app.route('/account')
+@app.route('/account', strict_slashes=False)
 def account():
-    user = session.get('user')
-    if not user:
-        return redirect('/login')
-    data = USERS.get(user, {})
+    username = session.get('user')
+
+    if not username or username not in USERS:
+        return redirect(url_for('login'))
+
+    data = USERS[username]
     return render_template_string(
         ACCOUNT_TEMPLATE,
-        user=user,
-        balance=data.get('balance'),
-        ssn=data.get('ssn'),
-        time=time.time()
+        user=username,
+        balance=data['balance'],
+        ssn=data['ssn'],
+        timestamp=time.time()
     )
 
-# -------------------------------------------------------
-# VULNERABILITY: path confusion
-# -------------------------------------------------------
 @app.route('/account/<path:anything>')
 def account_with_path(anything):
+    # Lab-only route for demonstrating path handling.
     return account()
 
-# -------------------------------------------------------
-# Static page — vulnerable to JS injection via poisoning
-# -------------------------------------------------------
 @app.route('/static-page')
 def static_page():
-    host = request.headers.get('X-Forwarded-Host', request.host)
-    return f'''<html>
+    # Intentionally reflects the forwarded host for the lab.
+    host = request.headers.get('X-Forwarded-Host', request.host).strip()
+
+    return f'''<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Static Page Demo</title></head>
 <body>
-    <h1>Static Page (cached by nginx)</h1>
-    <script src="http://{host}/static/app.js"></script>
-    <p>JS loaded from: <b>{host}</b></p>
+    <h1>Static Page (cached by Nginx)</h1>
+    <p>Demo host used: <b>{host}</b></p>
 </body>
 </html>'''
 
-# -------------------------------------------------------
-# Logout
-# -------------------------------------------------------
 @app.route('/logout')
 def logout():
     session.clear()
-    return redirect('/login')
+    return redirect(url_for('login'))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

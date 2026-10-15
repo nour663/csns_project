@@ -21,6 +21,16 @@ services:
       - flask
     networks:
       - app_net
+  
+  attacker_site:
+    image: nginx:alpine
+    container_name: attacker_site
+    ports:
+      - "8081:80"
+    volumes:
+      - ./attacker_site:/usr/share/nginx/html:ro
+    networks:
+      - app_net
 
 networks:
   app_net:
