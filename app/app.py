@@ -1,9 +1,11 @@
-
 from flask import Flask, request, session, redirect, render_template_string, url_for
 import time
 
 app = Flask(__name__)
 app.secret_key = 'insecure-demo-key'
+app.config['SESSION_COOKIE_HTTPONLY'] = False
+app.config['SESSION_COOKIE_SAMESITE'] = None
+app.config['SESSION_COOKIE_SECURE'] = False
 
 USERS = {
     'alice': {
@@ -32,7 +34,6 @@ LOGIN_TEMPLATE = '''
         <label>Password: <input type="password" name="password" required></label><br><br>
         <button type="submit">Login</button>
     </form>
-    <br>
     <p>Demo credentials: alice / password123</p>
 </body>
 </html>
@@ -67,14 +68,23 @@ ACCOUNT_TEMPLATE = '''
 </html>
 '''
 
+STATIC_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Static Page Demo</title></head>
+<body>
+    <h1>Static Page (cached by Nginx)</h1>
+    <p>Demo host used: <b>{host}</b></p>
+    <script src="http://{host}/static/app.js"></script>
+</body>
+</html>
+'''
+
 @app.route('/')
 def home():
-    # Intentionally vulnerable for the isolated cache-poisoning lab.
+    # Intentionally vulnerable for the isolated cache-poisoning lab
     host = request.headers.get('X-Forwarded-Host', request.host).strip()
-
-    # Use the forwarded host for the lab's links.
     demo_base = f"http://{host}"
-
     return render_template_string(
         HOME_TEMPLATE,
         host=host,
@@ -87,25 +97,20 @@ def login():
         username = request.form.get('username', '')
         password = request.form.get('password', '')
         user = USERS.get(username)
-
         if user and user['password'] == password:
             session['user'] = username
             return redirect(url_for('account'))
-
         return render_template_string(
             LOGIN_TEMPLATE,
             error='Invalid credentials'
         ), 401
-
     return render_template_string(LOGIN_TEMPLATE, error=None)
 
 @app.route('/account', strict_slashes=False)
 def account():
     username = session.get('user')
-
     if not username or username not in USERS:
         return redirect(url_for('login'))
-
     data = USERS[username]
     return render_template_string(
         ACCOUNT_TEMPLATE,
@@ -117,22 +122,14 @@ def account():
 
 @app.route('/account/<path:anything>')
 def account_with_path(anything):
-    # Lab-only route for demonstrating path handling.
+    # Lab-only route for demonstrating path confusion
     return account()
 
 @app.route('/static-page')
 def static_page():
-    # Intentionally reflects the forwarded host for the lab.
+    # Intentionally reflects the forwarded host for the lab
     host = request.headers.get('X-Forwarded-Host', request.host).strip()
-
-    return f'''<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>Static Page Demo</title></head>
-<body>
-    <h1>Static Page (cached by Nginx)</h1>
-    <p>Demo host used: <b>{host}</b></p>
-</body>
-</html>'''
+    return STATIC_TEMPLATE.format(host=host)
 
 @app.route('/logout')
 def logout():
